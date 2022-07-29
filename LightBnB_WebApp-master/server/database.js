@@ -18,10 +18,10 @@ const pool = new Pool({
  * @return {Promise<{}>} A promise to the user.
  */
 const getUserWithEmail = (email) => {
-  const querryString = `SELECT * FROM users
+  const queryString = `SELECT * FROM users
   WHERE email = $1`;
   return pool
-    .query(querryString, [email.toLowerCase()])
+    .query(queryString, [email.toLowerCase()])
     .then(res => res.rows[0])
     .catch(err => null);
 };
@@ -34,10 +34,10 @@ exports.getUserWithEmail = getUserWithEmail;
  * @return {Promise<{}>} A promise to the user.
  */
 const getUserWithId = (id) => {
-  const querryString = `SELECT * FROM users WHERE id = $1;`
+  const queryString = `SELECT * FROM users WHERE id = $1;`
   const values = [id]
   return pool
-  .query(querryString, values)
+  .query(queryString, values)
   .then(res => res.rows[0])
   .catch(err => null);
 }
@@ -50,13 +50,13 @@ exports.getUserWithId = getUserWithId;
  * @return {Promise<{}>} A promise to the user.
  */
 const addUser = (user) => {
-  const querryString = `
+  const queryString = `
   INSERT INTO users (name, email, password)
   VALUES($1, $2, $3)
   RETURNING *;`
   const values = [user.name, user.email, user.password];
   return pool
-  .query(querryString, values)
+  .query(queryString, values)
   .then(res => res.rows[0])
   .catch(err => null)
 }
@@ -69,8 +69,22 @@ exports.addUser = addUser;
  * @param {string} guest_id The id of the user.
  * @return {Promise<[{}]>} A promise to the reservations.
  */
-const getAllReservations = function(guest_id, limit = 10) {
-  return getAllProperties(null, 2);
+const getAllReservations = (guest_id, limit = 10) => {
+  const queryString = `
+  SELECT properties.*, reservations.*, avg(property_reviews.rating) as average_rating
+  FROM reservations
+  JOIN properties ON properties.id = reservations.property_id
+  JOIN property_reviews ON properties.id = property_reviews.property_id 
+  WHERE reservations.guest_id = $1 AND reservations.end_date < now()::date
+  GROUP BY properties.id, reservations.id
+  ORDER BY reservations.start_date
+  LIMIT $2
+;`
+const values = [guest_id, limit];
+return pool
+.query(queryString, values)
+.then(res => res.rows)
+.catch(err => null);
 }
 exports.getAllReservations = getAllReservations;
 
@@ -83,23 +97,48 @@ exports.getAllReservations = getAllReservations;
  * @return {Promise<[{}]>}  A promise to the properties.
  */
  const getAllProperties = (options, limit = 10) => {
-  return pool
-    .query(`SELECT * FROM properties LIMIT $1`, [limit])
-    .then((result) => {
-      console.log(result.rows);
-      return result.rows;
-    })
-    .catch((err) => {
-      console.log(err.message);
-    });
+  let queryParams = [];
+  let queryString = `SELECT properties.*, avg(property_reviews.rating) as average_rating
+  FROM properties
+  JOIN property_reviews ON properties.id = property_id \n`;
+
+  if (options.city) {
+    queryParams.push(`%${options.city}%`)
+    queryString += `WHERE city LIKE $${queryParams.length} \n`;
+  }
+
+  if (options.owner_id) {
+    queryParams.push(`%${options.owner_id}`)
+    queryString += `AND owner_id = $${queryParams.length} \n`;
+  }
+
+  if (options.minimum_price_per_night && options.maximum_price_per_night) {
+    queryParams.push(`%${options.minimum_price_per_night*100}`);
+    queryParams.push(`%${options.maximum_price_per_night*100}`);
+    queryString += `AND cost_per_night BETWEEN $${queryParams.length - 1} AND $${queryParams.length} \n`;
+  }
+  queryString += `GROUP BY properties.id`;
+
+  if (options.minimum_rating) {
+    queryParams.push(`%${options.minimum_rating}`);
+    queryString += `HAVING avg(rating) >= $${queryParams.length} \n`;
+  }
+
+  // 4
+  queryParams.push(limit);
+  queryString += `
+  ORDER BY cost_per_night
+  LIMIT $${queryParams.length};
+  `
+
+  // 5
+  console.log(queryString, queryParams);
+
+  // 6
+  return pool.query(queryString, queryParams)
+  .then(res => res.rows);
 };
 
-//   const limitedProperties = {};
-//   for (let i = 1; i <= limit; i++) {
-//     limitedProperties[i] = properties[i];
-//   }
-//   return Promise.resolve(limitedProperties);
-// }
 exports.getAllProperties = getAllProperties;
 
 
